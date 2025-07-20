@@ -11,8 +11,8 @@ from tqdm.auto import tqdm
 from time import perf_counter as timer
 import textwrap
 import tempfile
-import pickle
-
+from google import genai
+client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 # Page configuration
 st.set_page_config(
     page_title="Local RAG PDF Chatbot",
@@ -20,6 +20,124 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Custom CSS for chat bubbles and modal
+st.markdown("""
+<style>
+.user-message {
+    background-color: #E3F2FD;
+    color: black;
+    padding: 15px;
+    margin: 10px 0;
+    border-radius: 15px 15px 5px 15px;
+    margin-left: 20%;
+    border-left: 4px solid #2196F3;
+}
+
+.bot-message {
+    background-color: #F1F8E9;
+    padding: 15px;
+    color: black;
+    margin: 10px 0;
+    border-radius: 15px 15px 15px 5px;
+    margin-right: 20%;
+    border-left: 4px solid #4CAF50;
+}
+
+.chunk-links {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #ddd;
+    font-size: 0.85em;
+    color: #666;
+}
+
+.chunk-links small {
+    color: #555;
+}
+
+.chunk-link {
+    display: inline-block;
+    background-color: #E8F5E8;
+    color: black;
+    padding: 4px 8px;
+    margin: 2px 4px;
+    border-radius: 12px;
+    text-decoration: none;
+    border: 1px solid #4CAF50;
+    font-size: 0.8em;
+    cursor: pointer;
+}
+
+.chunk-link:hover {
+    background-color: #C8E6C9;
+    text-decoration: none;
+}
+
+.stTextInput > div > div > input {
+    border-radius: 25px;
+    border: 2px solid #E0E0E0;
+    padding: 10px 20px;
+}
+
+.stButton > button {
+    border-radius: 25px;
+    height: 3rem;
+}
+
+.chunk-modal {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+    color: black;
+    padding: 8px;
+    margin: 10px 0;
+}
+
+.chunk-header {
+    background-color: #e9ecef;
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    border-radius: 6px 6px 0 0;
+    padding-top: 10px;
+}
+
+.chunk-content {
+    background-color: white;
+    padding: 15px;
+    color: black;
+    border-radius: 0 0 6px 6px;
+    border-left: 4px solid #007bff;
+    # margin: 10px 0;
+}
+
+.good {
+    background-color: green;
+    color: white;
+    padding: 5px 8px;
+    border-radius: 12px;
+    
+}
+
+.moderate {
+    background-color: yellow;
+    color: black;
+    padding: 5px 8px;
+    border-radius: 12px;
+    
+}
+
+.bad {
+    background-color: red;
+    color: white;
+    padding: 5px 8px;
+    border-radius: 12px;
+    
+}
+
+</style>
+""", unsafe_allow_html=True)
 
 # Initialize session state
 if 'processed_data' not in st.session_state:
@@ -30,6 +148,10 @@ if 'embedding_model' not in st.session_state:
     st.session_state.embedding_model = None
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
+if 'show_chunks_modal' not in st.session_state:
+    st.session_state.show_chunks_modal = {}
+if 'selected_chunks' not in st.session_state:
+    st.session_state.selected_chunks = {}
 
 # Utility functions
 @st.cache_data
@@ -115,8 +237,8 @@ def process_pdf_to_chunks(pdf_path: str, chunk_size: int = 10):
         for sentence_chunk in item["sentence_chunks"]:
             chunk_dict = {}
             chunk_dict["page_number"] = item["page_number"]
-            joined_sentence_chunk = "".join(sentence_chunk).replace("  ","").strip()
-            joined_sentence_chunk = re.sub(r'\.(A-Z])', r'. \1', joined_sentence_chunk)
+            joined_sentence_chunk = "".join(sentence_chunk).strip()
+            joined_sentence_chunk = re.sub(r'\.([A-Z])', r'. \1', joined_sentence_chunk)
             chunk_dict["sentence_chunk"] = joined_sentence_chunk
             chunk_dict["chunk_char_count"] = len(joined_sentence_chunk)
             chunk_dict["chunk_word_count"] = len([word for word in joined_sentence_chunk.split(" ")])
@@ -162,8 +284,30 @@ def retrieve_relevant_resources(query: str, embeddings: torch.tensor, model: Sen
     dot_scores = util.dot_score(query_embedding, embeddings)[0]
     end_time = timer()
     
+    
+    
     scores, indices = torch.topk(input=dot_scores, k=n_resources_to_return)
-    return scores, indices, end_time - start_time
+    
+    # Get the top-k chunks from the retrieved indices
+    top_chunks = [st.session_state.processed_data.iloc[int(idx)]['sentence_chunk'] for idx in indices]
+    
+    content = f'''
+    You are a helpful assistant. Your task is to answer questions based on the provided text chunks.
+    Here are the most relevant text chunks based on the query: "{query}".
+    Please provide concise and accurate answers based on the content of these chunks.
+    The text chunks are as follows:
+    {"\n".join([f"{i+1}. {text}" for i, text in enumerate(top_chunks)])}
+    
+    Query: {query}
+    '''
+    
+    # Send the relevent resources to the client and return the model response
+    response = client.models.generate_content(
+    model="gemini-2.5-flash", contents=content)
+    
+    print(response.text)
+    
+    return scores, indices, end_time - start_time, response.text
 
 def print_wrapped(text, width=80):
     """Print text wrapped to specified width."""
@@ -176,8 +320,8 @@ st.markdown("Upload a PDF document and chat with it using local embeddings and s
 # Sidebar
 st.sidebar.header("⚙️ Settings")
 
-# File upload
-uploaded_file = st.file_uploader("Upload a PDF file", type=["pdf"])
+# File upload in sidebar
+uploaded_file = st.sidebar.file_uploader("Upload a PDF file", type=["pdf"])
 
 if uploaded_file is not None:
     # Save uploaded file temporarily
@@ -185,7 +329,7 @@ if uploaded_file is not None:
         tmp_file.write(uploaded_file.getvalue())
         tmp_file_path = tmp_file.name
     
-    st.success("✅ File uploaded successfully!")
+    st.sidebar.success("✅ File uploaded successfully!")
     
     # Processing options
     st.sidebar.subheader("📊 Processing Options")
@@ -223,138 +367,200 @@ if uploaded_file is not None:
     
     # Chat interface
     if st.session_state.processed_data is not None:
-        st.divider()
         st.subheader("💬 Chat with your PDF")
         
-        # Search parameters
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            query = st.text_input("Ask a question about your PDF:", placeholder="e.g., What is Python dictionary?")
-        with col2:
-            n_results = st.selectbox("Results to show:", [3, 5, 10], index=1)
+        # Chat settings in sidebar
+        st.sidebar.subheader("🔧 Chat Settings")
+        n_results = st.sidebar.selectbox("Results to show:", [3, 5, 10], index=1)
         
-        if query:
-            try:
-                scores, indices, search_time = retrieve_relevant_resources(
-                    query=query, 
-                    embeddings=st.session_state.embeddings, 
-                    model=st.session_state.embedding_model, 
-                    n_resources_to_return=n_results
+        # Chat history display
+        if st.session_state.chat_history:
+            st.markdown("### 📝 Conversation")
+            
+            # Display chat messages
+            for i, chat in enumerate(st.session_state.chat_history):
+                # User message
+                st.markdown(f"""
+                <div class="user-message">
+                    <strong>You:</strong> {chat['query']}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Bot response with chunk links
+                chunk_links_html = ""
+                if 'results' in chat and chat['results']:
+                    chunk_links = []
+                    for j, (score, idx) in enumerate(chat['results']):
+                        chunk_data = st.session_state.processed_data.iloc[int(idx)]
+                        page_num = int(chunk_data['page_number']) + 1
+                        chunk_links.append(f"📄 Page {page_num} ({score:.3f})")
+                    
+                
+                st.markdown(f"""
+                <div class="bot-message">
+                    <strong>🤖 Assistant:</strong> {chat['response']}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Add buttons to view chunks
+                if 'results' in chat and chat['results']:
+                    col1, col2, col3 = st.columns([1, 2, 1])
+                    with col2:
+                        if st.button(f"📋 View Source Chunks", key=f"chunks_btn_{i}", use_container_width=True):
+                            st.session_state.show_chunks_modal[i] = True
+                            st.session_state.selected_chunks[i] = chat['results']
+                            st.rerun()
+                
+                # Display modal if requested
+                if st.session_state.show_chunks_modal.get(i, False):
+                    st.markdown("---")
+                    st.markdown(f"### 📋 Source Chunks for Query {i+1}")
+                    
+                    try:
+                        for j, (score, idx) in enumerate(st.session_state.selected_chunks[i]):
+                            chunk_data = st.session_state.processed_data.iloc[int(idx)]
+                            
+                            st.markdown(f"""
+                            <div class="chunk-modal">
+                                <div class="chunk-header">
+                                    <p>📄 Chunk {j+1} - Page {int(chunk_data['page_number']) + 1}</p>
+                                    <p class={
+                                        "good" if score > 0.7 else "moderate" if score > 0.4 else "bad"
+                                        }><strong>Similarity Score:</strong> {score * 100:.2f}</p>
+                                    <p><strong>Word Count:</strong> {int(chunk_data['chunk_word_count'])}</p>
+                                </div>
+                                <div class="chunk-content">
+                                {chunk_data['sentence_chunk']}
+                            </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                    except Exception as e:
+                        st.error(f"Error displaying chunks: {str(e)}")
+                    
+                    col1, col2, col3 = st.columns([1, 1, 1])
+                    with col2:
+                        if st.button(f"❌ Close", key=f"close_modal_{i}", use_container_width=True):
+                            st.session_state.show_chunks_modal[i] = False
+                            st.rerun()
+                    
+                    st.markdown("---")
+        
+        # Divider before input
+        st.divider()
+        
+        # Input area at bottom
+        st.markdown("### 💭 Ask a question")
+        
+        # Create input form
+        with st.form(key="chat_form", clear_on_submit=True):
+            col1, col2 = st.columns([4, 1])
+            
+            with col1:
+                query = st.text_input("", placeholder="Ask a question about your PDF...", label_visibility="collapsed")
+            
+            with col2:
+                submit_button = st.form_submit_button("Send 📤", use_container_width=True)
+        
+        # Clear chat button in sidebar
+        if st.session_state.chat_history:
+            if st.sidebar.button("🗑️ Clear Chat History"):
+                st.session_state.chat_history = []
+                st.session_state.show_chunks_modal = {}
+                st.session_state.selected_chunks = {}
+                st.rerun()
+        
+        # Data exploration in sidebar
+        with st.sidebar.expander("📊 Data Analysis", expanded=False):
+            if st.button("📈 View Statistics"):
+                st.write("**Chunk Statistics:**")
+                stats_df = st.session_state.processed_data[['chunk_char_count', 'chunk_word_count', 'chunk_token_count', 'page_number']].describe()
+                st.dataframe(stats_df, use_container_width=True)
+            
+            if st.button("💾 Export Data"):
+                csv = st.session_state.processed_data.drop(columns=['embedding']).to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name="pdf_chunks.csv",
+                    mime="text/csv",
+                    use_container_width=True
                 )
+        
+        # Process query
+        if submit_button and query:
+            try:
+                with st.spinner("🔍 Searching for relevant information..."):
+                    scores, indices, search_time, model_response = retrieve_relevant_resources(
+                        query=query, 
+                        embeddings=st.session_state.embeddings, 
+                        model=st.session_state.embedding_model, 
+                        n_resources_to_return=n_results
+                    )
                 
                 # Add to chat history
+                chat_index = len(st.session_state.chat_history)
                 st.session_state.chat_history.append({
                     "query": query,
+                    "response": model_response,
                     "results": [(scores[i].item(), indices[i].item()) for i in range(len(scores))],
                     "search_time": search_time
                 })
                 
-                st.info(f"🔍 Search completed in {search_time:.4f} seconds")
+                # Initialize modal state for new chat
+                st.session_state.show_chunks_modal[chat_index] = False
                 
-                # Display results
-                st.subheader("📋 Search Results")
-                
-                for i, (score, idx) in enumerate(zip(scores, indices)):
-                    with st.expander(f"Result {i+1} (Score: {score.item():.4f})", expanded=i<2):
-                        chunk_data = st.session_state.processed_data.iloc[int(idx)]
-                        st.write("**Text:**")
-                        st.write(chunk_data['sentence_chunk'])
-                        
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Page", int(chunk_data['page_number']) + 1)
-                        with col2:
-                            st.metric("Word Count", int(chunk_data['chunk_word_count']))
-                        with col3:
-                            st.metric("Similarity Score", f"{score.item():.4f}")
+                # Rerun to show updated chat
+                st.rerun()
                 
             except Exception as e:
                 st.error(f"❌ Error during search: {str(e)}")
+    
+    # Show initial state if no processed data
+    else:
+        st.info("📤 Please upload and process a PDF file in the sidebar to start chatting.")
         
-        # Chat history
-        if st.session_state.chat_history:
-            st.divider()
-            st.subheader("📝 Chat History")
-            
-            if st.button("🗑️ Clear History"):
-                st.session_state.chat_history = []
-                st.rerun()
-            
-            for i, chat in enumerate(reversed(st.session_state.chat_history)):
-                with st.expander(f"Query {len(st.session_state.chat_history) - i}: {chat['query'][:50]}..."):
-                    st.write(f"**Query:** {chat['query']}")
-                    st.write(f"**Search Time:** {chat['search_time']:.4f} seconds")
-                    st.write(f"**Top Result Score:** {chat['results'][0][0]:.4f}")
+        # Instructions
+        st.markdown("""
+        ### 🔍 How it works:
         
-        # Data exploration
-        st.divider()
-        st.subheader("📊 Data Analysis")
+        1. **Upload PDF**: Choose any PDF document in the sidebar
+        2. **Process**: The app will:
+           - Extract text from all pages
+           - Split text into sentence chunks
+           - Generate embeddings using sentence-transformers
+        3. **Chat**: Ask questions about the content
+        4. **Get Results**: Receive relevant answers based on document content
         
-        tab1, tab2, tab3 = st.tabs(["📈 Statistics", "📋 Sample Data", "🔧 Export"])
-        
-        with tab1:
-            st.write("**Chunk Statistics:**")
-            st.dataframe(st.session_state.processed_data[['chunk_char_count', 'chunk_word_count', 'chunk_token_count', 'page_number']].describe())
-            
-            # Visualization
-            import matplotlib.pyplot as plt
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
-            
-            ax1.hist(st.session_state.processed_data['chunk_word_count'], bins=20, alpha=0.7)
-            ax1.set_title('Distribution of Chunk Word Counts')
-            ax1.set_xlabel('Word Count')
-            ax1.set_ylabel('Frequency')
-            
-            ax2.scatter(st.session_state.processed_data['page_number'], st.session_state.processed_data['chunk_word_count'], alpha=0.6)
-            ax2.set_title('Word Count vs Page Number')
-            ax2.set_xlabel('Page Number')
-            ax2.set_ylabel('Word Count')
-            
-            st.pyplot(fig)
-        
-        with tab2:
-            st.write("**Sample chunks:**")
-            sample_size = min(10, len(st.session_state.processed_data))
-            sample_data = st.session_state.processed_data.sample(n=sample_size)[['page_number', 'sentence_chunk', 'chunk_word_count']]
-            
-            for idx, row in sample_data.iterrows():
-                with st.expander(f"Page {int(row['page_number']) + 1} - {row['chunk_word_count']} words"):
-                    st.write(row['sentence_chunk'])
-        
-        with tab3:
-            st.write("**Export processed data:**")
-            
-            if st.button("💾 Download CSV"):
-                csv = st.session_state.processed_data.drop(columns=['embedding']).to_csv(index=False)
-                st.download_button(
-                    label="Download as CSV",
-                    data=csv,
-                    file_name="pdf_chunks.csv",
-                    mime="text/csv"
-                )
-            
-            st.info("💡 **Tip:** You can save the embeddings separately for faster future loading!")
+        ### ✨ Features:
+        - Local processing (no external APIs required)
+        - Semantic search using sentence embeddings
+        - Adjustable chunk sizes
+        - Chat history with message bubbles
+        - Data visualization and export
+        - Fast similarity search with dot product scoring
+        """)
 
 else:
-    st.warning("📤 Please upload a PDF file to start chatting.")
+    st.info("📤 Please upload a PDF file in the sidebar to start chatting.")
     
     # Instructions
     st.markdown("""
     ### 🔍 How it works:
     
-    1. **Upload PDF**: Choose any PDF document
+    1. **Upload PDF**: Choose any PDF document in the sidebar
     2. **Process**: The app will:
        - Extract text from all pages
        - Split text into sentence chunks
        - Generate embeddings using sentence-transformers
     3. **Chat**: Ask questions about the content
-    4. **Get Results**: Receive relevant text chunks ranked by similarity
+    4. **Get Results**: Receive relevant answers based on document content
     
     ### ✨ Features:
     - Local processing (no external APIs required)
     - Semantic search using sentence embeddings
     - Adjustable chunk sizes
-    - Chat history
+    - Chat history with message bubbles
     - Data visualization and export
     - Fast similarity search with dot product scoring
     """)

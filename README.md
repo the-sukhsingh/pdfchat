@@ -1,13 +1,41 @@
-# Local RAG PDF Chatbot 📚
+# Enhanced PDFChat RAG Application 📚🤖
 
-A fully-featured Streamlit application that implements a local Retrieval-Augmented Generation (RAG) pipeline for PDF documents. Chat with your PDFs using semantic search and local embeddings - no external APIs required!
+A sophisticated Retrieval-Augmented Generation (RAG) application that allows you to upload PDF documents, process them with advanced chunking techniques, and have intelligent conversations about their content using AI.
 
-## 🌟 Features
+## 🌟 Key Features
 
-- **Local Processing**: Complete PDF processing and search without external dependencies
-- **Semantic Search**: Uses sentence-transformers for high-quality embeddings
-- **Interactive Chat**: Natural language querying of PDF content
-- **Real-time Results**: Fast similarity search with relevance scoring
+### 📄 Advanced PDF Processing
+- **Multiple PDF Upload**: Process multiple documents simultaneously
+- **Smart Chunking**: Configurable sentence-based text segmentation
+- **Progress Tracking**: Real-time processing updates with progress bars
+- **Metadata Extraction**: Comprehensive chunk analytics and statistics
+
+### 💬 Enhanced Chat Experience
+- **Multiple Chat Sessions**: Create, manage, and switch between different conversations
+- **Chat Management**: Rename, delete, and organize your chat sessions
+- **Persistent History**: All conversations are automatically saved
+- **Command Support**: Use `/command` syntax for special AI interactions
+- **Message Management**: Pin, highlight, and tag messages for organization
+
+### ⚙️ Configurable Settings (Persistent)
+- **PDF Chunk Size**: Adjust sentence grouping (5-25 sentences per chunk)
+- **Search Results**: Configure number of relevant chunks to retrieve (3-20)
+- **AI Response Style**: Choose between concise or detailed responses
+- **Language & Tone**: Set formal, casual, or natural language preferences
+- **UI Preferences**: Show/hide similarity scores, auto-save settings
+
+### 🔍 Advanced Search & Analytics
+- **Chat Search**: Find messages across all sessions with keyword and date filters
+- **Chunk Search**: Search within document content with highlighting
+- **Message Tagging**: Organize conversations with custom tags
+- **Analytics Dashboard**: Comprehensive statistics and performance insights
+- **Visual Analytics**: Charts and graphs for data visualization
+
+### 💾 Data Management
+- **CSV Export/Import**: Export chunks and chat history, import external data
+- **Chat Export**: Save conversations as text files
+- **Chunk Viewer**: Paginated browser with filtering and sorting
+- **Data Persistence**: Settings and preferences saved across sessions
 - **Data Visualization**: Statistics and charts about your document chunks
 - **Export Capabilities**: Download processed data as CSV
 - **Chat History**: Keep track of your queries and results
